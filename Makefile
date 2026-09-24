@@ -11,7 +11,7 @@ help:
 install:
 	@echo "Installing wealthgrabber as a user-level tool..."
 	@command -v uv >/dev/null 2>&1 || { echo "Error: uv is not installed. Please install it first: https://github.com/astral-sh/uv"; exit 1; }
-	@uv tool install -e .
+	@uv tool install -e . --reinstall --force
 	@echo ""
 	@echo "✓ Installation complete!"
 	@echo ""

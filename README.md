@@ -4,9 +4,12 @@ Wealthsimple Account Viewer CLI. Secure and simple tool to view your Wealthsimpl
 
 ## Features
 - **Secure Authentication**: Uses system keyring to safely store credentials.
-- **Account Listing**: Clear overview of all your accounts and their current values.
+- **Account Listing**: Clear overview of all your accounts, deposits, and simple returns.
 - **Transaction History**: View activities and transactions across your accounts.
 - **Asset Positions**: Monitor your investment holdings with P&L tracking.
+- **Dividend Income**: Totals and per-security income, plus upcoming announced dates.
+- **Net Worth**: Household or own net worth with recent history and linked accounts.
+- **Performance**: Simple returns, realized gains, and unrealized P&L.
 - **Multiple Output Formats**: Table (default), JSON, and CSV output for easy integration.
 - **Privacy Focused**: No data is stored externally; everything runs locally.
 
@@ -49,7 +52,7 @@ uv run wealthgrabber --help
 
 ## Usage
 
-The CLI provides five main commands: `login`, `logout`, `list`, `activities`, and `assets`.
+The CLI provides eight main commands: `login`, `logout`, `list`, `activities`, `assets`, `dividends`, `networth`, and `performance`.
 
 All commands support the `--verbose/-v` flag for detailed status messages during execution.
 
@@ -80,7 +83,7 @@ wealthgrabber logout
 ### Accounts
 
 #### List Accounts
-View a summary of your accounts with their current values.
+View a summary of your accounts with current values, net deposits, and simple returns.
 
 ```bash
 wealthgrabber list
@@ -117,6 +120,9 @@ wealthgrabber activities
 - `--account/-a ACCOUNT_NUMBER`: Filter by account number (e.g., 'TFSA-001').
 - `--dividends/-d`: Show only dividend transactions.
 - `--limit/-n N`: Maximum number of activities per account (default: 50).
+- `--since/-s YYYY-MM-DD`: Start date.
+- `--until YYYY-MM-DD`: End date.
+- `--type/-t TYPE`: Filter by activity type substring (e.g. `DIY_BUY`).
 - `--format/-f {table,json,csv}`: Output format (default: table).
 
 **Examples:**
@@ -130,8 +136,93 @@ wealthgrabber activities --dividends --format json
 # View last 100 activities from a specific account
 wealthgrabber activities --account TFSA-001 --limit 100
 
+# Buys since the start of the year
+wealthgrabber activities --type DIY_BUY --since 2026-01-01
+
 # Export activities to CSV
 wealthgrabber activities --format csv > activities.csv
+```
+
+### Dividends
+
+#### Dividend Income and Upcoming Dates
+Show dividend income since the start of the year, then announced upcoming dates for current holdings.
+
+```bash
+wealthgrabber dividends
+```
+
+**Options:**
+- `--account/-a ACCOUNT_NUMBER`: Filter by account number (e.g., 'TFSA-001').
+- `--since/-s YYYY-MM-DD`: Start date for received income (default: January 1 of this year).
+- `--currency CURRENCY`: Currency for amounts and yield (default: CAD).
+- `--no-upcoming`: Skip the upcoming dividend calendar.
+- `--format/-f {table,json,csv}`: Output format (default: table).
+
+**Examples:**
+```bash
+# Year-to-date income plus upcoming dates
+wealthgrabber dividends
+
+# Income since a custom date, JSON export
+wealthgrabber dividends --since 2025-01-01 --format json
+
+# One account, skip the holdings calendar
+wealthgrabber dividends --account TFSA-001 --no-upcoming
+```
+
+Per-transaction dividend history is still available via `wealthgrabber activities --dividends`.
+
+### Net Worth
+
+#### Household or Own Net Worth
+Show current net worth, change over a recent window, and optionally the accounts that make it up.
+
+```bash
+wealthgrabber networth
+```
+
+**Options:**
+- `--scope {household,own}`: HOUSEHOLD includes linked members (default: household).
+- `--days N`: Number of days of history (default: 30).
+- `--accounts`: Also list Wealthsimple and linked external accounts.
+- `--currency CURRENCY`: Currency for amounts (default: CAD).
+- `--format/-f {table,json,csv}`: Output format (default: table).
+
+**Examples:**
+```bash
+# Last 30 days, household (default)
+wealthgrabber networth
+
+# Own identity only, 90-day history, JSON
+wealthgrabber networth --scope own --days 90 --format json
+
+# Include WS and linked external accounts
+wealthgrabber networth --accounts
+```
+
+### Performance
+
+#### Returns and P&L
+Show net liquidation, net deposits, simple return, realized gains by security, and unrealized P&L by account.
+
+```bash
+wealthgrabber performance
+```
+
+**Options:**
+- `--account/-a ACCOUNT_NUMBER`: Filter by account number (e.g., 'TFSA-001').
+- `--since/-s YYYY-MM-DD`: Start date (default: January 1 of this year).
+- `--currency CURRENCY`: Currency for amounts (default: CAD).
+- `--format/-f {table,json,csv}`: Output format (default: table).
+
+**Examples:**
+```bash
+# Year-to-date performance
+wealthgrabber performance
+
+# One account since a custom date
+wealthgrabber performance --account TFSA-001 --since 2025-01-01 --format json
 ```
 
 ### Investments

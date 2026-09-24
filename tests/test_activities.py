@@ -343,6 +343,71 @@ def test_get_activities_data_dividends_only(
     assert result[0].activity_type == "DIY_DIVIDEND"
 
 
+def test_get_activities_data_filters_by_type(
+    mock_ws_client, sample_activity, sample_dividend_activity
+):
+    """Test activity type substring filter."""
+    mock_ws_client.get_activities.return_value = [
+        sample_activity,
+        sample_dividend_activity,
+    ]
+    mock_ws_client.get_security_market_data.return_value = None
+
+    result = get_activities_data(
+        mock_ws_client, account_id="acc-123", activity_type="DIVIDEND"
+    )
+
+    assert len(result) == 1
+    assert result[0].activity_type == "DIY_DIVIDEND"
+    mock_ws_client.get_activities.assert_called_with("acc-123", load_all=True)
+
+
+def test_get_activities_data_forwards_since_until(mock_ws_client, sample_activity):
+    """Test that since/until are forwarded as datetimes."""
+    mock_ws_client.get_activities.return_value = [sample_activity]
+    mock_ws_client.get_security_market_data.return_value = None
+
+    get_activities_data(
+        mock_ws_client,
+        account_id="acc-123",
+        since="2026-01-01",
+        until="2026-03-31",
+    )
+
+    kwargs = mock_ws_client.get_activities.call_args.kwargs
+    assert kwargs["how_many"] == 50
+    assert kwargs["start_date"].strftime("%Y-%m-%d") == "2026-01-01"
+    assert kwargs["end_date"].strftime("%Y-%m-%d") == "2026-03-31"
+
+
+def test_get_activities_data_maps_extra_fields(mock_ws_client):
+    """Test fees, FX, realized P&L, and merchant fields."""
+    mock_ws_client.get_activities.return_value = [
+        {
+            "type": "DIY_SELL",
+            "description": "Sold XEQT",
+            "occurredAt": "2026-02-01T12:00:00Z",
+            "amountSign": "positive",
+            "amount": "100.00",
+            "currency": "CAD",
+            "fees": "1.50",
+            "fxRate": "1.35",
+            "realizedPnl": "12.00",
+            "withholdingTaxAmount": "0.50",
+            "assetSymbol": "XEQT",
+            "spendMerchant": None,
+        }
+    ]
+    mock_ws_client.get_security_market_data.return_value = None
+
+    result = get_activities_data(mock_ws_client, account_id="acc-123")
+    assert result[0].fees == 1.5
+    assert result[0].fx_rate == 1.35
+    assert result[0].realized_pnl == 12.0
+    assert result[0].withholding_tax == 0.5
+    assert result[0].asset_symbol == "XEQT"
+
+
 # Tests for print_activities
 def test_print_activities_all_accounts(mock_ws_client, sample_activity, capsys):
     """Test printing activities for all accounts."""
@@ -390,7 +455,7 @@ def test_print_activities_single_account(mock_ws_client, sample_activity, capsys
 
     print_activities(mock_ws_client, account_id="acc-123")
 
-    mock_ws_client.get_activities.assert_called_with("acc-123")
+    mock_ws_client.get_activities.assert_called_with("acc-123", how_many=50)
     captured = capsys.readouterr()
     lines = captured.out.split("\n")
 

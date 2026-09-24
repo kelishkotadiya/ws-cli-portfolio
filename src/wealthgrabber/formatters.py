@@ -6,7 +6,16 @@ from dataclasses import asdict
 from io import StringIO
 from typing import Optional, Protocol, Sequence
 
-from .models import AccountData, ActivityData, PositionData
+from .models import (
+    AccountData,
+    ActivityData,
+    DividendIncomeRow,
+    DividendsReport,
+    NetWorthReport,
+    PerformanceReport,
+    PositionData,
+    UpcomingDividendRow,
+)
 
 
 def _calculate_position_totals(
@@ -45,6 +54,18 @@ class FormatterProtocol(Protocol):
         group_label: Optional[str] = None,
     ) -> str:
         """Format position data."""
+        ...
+
+    def format_dividends(self, report: DividendsReport) -> str:
+        """Format dividend income and upcoming dates."""
+        ...
+
+    def format_networth(self, report: NetWorthReport) -> str:
+        """Format net worth data."""
+        ...
+
+    def format_performance(self, report: PerformanceReport) -> str:
+        """Format performance data."""
         ...
 
 
@@ -97,24 +118,43 @@ class TableFormatter:
         if not accounts:
             return "No accounts found."
 
+        width = 108
         lines = []
-        lines.append("\n" + "=" * 80)
-        lines.append(f"{'Account':<40} {'Number':<20} {'Value':>18}")
-        lines.append("-" * 80)
+        lines.append("\n" + "=" * width)
+        lines.append(
+            f"{'Account':<28} {'Number':<16} {'Value':>16} "
+            f"{'Deposits':>14} {'Return':>14}"
+        )
+        lines.append("-" * width)
 
         total_value = 0.0
+        total_deposits = 0.0
+        total_return = 0.0
         for acc in accounts:
+            return_str = self._format_return(acc.return_amount, acc.return_rate)
             lines.append(
-                f"{acc.description:<40} {acc.number:<20} "
-                f"{acc.value:>15,.2f} {acc.currency}"
+                f"{acc.description[:28]:<28} {acc.number:<16} "
+                f"{acc.value:>12,.2f} {acc.currency} "
+                f"{acc.net_deposits:>10,.2f} {return_str:>14}"
             )
             total_value += acc.value
+            total_deposits += acc.net_deposits
+            total_return += acc.return_amount
 
-        lines.append("=" * 80)
-        lines.append(f"{'Total':<61} {total_value:>15,.2f} CAD")
-        lines.append("=" * 80)
+        lines.append("=" * width)
+        lines.append(
+            f"{'Total':<45} {total_value:>12,.2f} CAD "
+            f"{total_deposits:>10,.2f} {total_return:>+14,.2f}"
+        )
+        lines.append("=" * width)
 
         return "\n".join(lines)
+
+    @staticmethod
+    def _format_return(amount: float, rate: Optional[float]) -> str:
+        if rate is None:
+            return f"{amount:+,.2f}"
+        return f"{amount:+,.2f} {rate:.1f}%"
 
     def format_activities(self, activities: Sequence[ActivityData]) -> str:
         """Format activities as table."""
@@ -133,7 +173,8 @@ class TableFormatter:
                 lines.append(f"Account: {act.account_label}")
                 lines.append("=" * 80)
                 lines.append(
-                    f"{'Date':<12} {'Type':<14} {'Description':<34} {'Amount':>18}"
+                    f"{'Date':<12} {'Type':<14} {'Description':<34} "
+                    f"{'Amount':>18} {'Fees':>10} {'RPnL':>12}"
                 )
                 lines.append("-" * 80)
                 current_account = act.account_label
@@ -141,14 +182,17 @@ class TableFormatter:
                 # First activity, no account label
                 lines.append("\n" + "=" * 80)
                 lines.append(
-                    f"{'Date':<12} {'Type':<14} {'Description':<34} {'Amount':>18}"
+                    f"{'Date':<12} {'Type':<14} {'Description':<34} "
+                    f"{'Amount':>18} {'Fees':>10} {'RPnL':>12}"
                 )
                 lines.append("-" * 80)
                 current_account = ""
 
+            fees = f"{act.fees:,.2f}" if act.fees is not None else ""
+            rpnl = f"{act.realized_pnl:+,.2f}" if act.realized_pnl is not None else ""
             lines.append(
                 f"{act.date:<12} {act.activity_type:<14} {act.description:<34} "
-                f"{act.sign}{act.amount:>14,.2f} {act.currency}"
+                f"{act.sign}{act.amount:>14,.2f} {act.currency} {fees:>10} {rpnl:>12}"
             )
 
         lines.append("=" * 80)
@@ -202,6 +246,172 @@ class TableFormatter:
 
         return "\n".join(lines)
 
+    def format_dividends(self, report: DividendsReport) -> str:
+        """Format dividend income and upcoming dates as a table."""
+        lines: list[str] = []
+        title = f"Dividends received since {report.since} ({report.currency})"
+        if report.account_label:
+            title = f"{title} - {report.account_label}"
+
+        lines.append("")
+        lines.append("=" * 80)
+        lines.append(title)
+        lines.append("=" * 80)
+
+        if not report.income:
+            lines.append(f"No dividend income since {report.since}.")
+        else:
+            lines.append(f"{'SYMBOL':<10} {'NAME':<32} {'AMOUNT':>18}")
+            lines.append("-" * 80)
+            for row in report.income:
+                lines.append(self._format_income_row(row))
+            lines.append("=" * 80)
+            lines.append(
+                f"{'TOTAL':<43} {report.total_amount:>15,.2f} {report.currency}"
+            )
+            lines.append("=" * 80)
+
+        if report.upcoming:
+            lines.append("")
+            lines.append("=" * 94)
+            lines.append("Upcoming dividends")
+            lines.append("=" * 94)
+            lines.append(
+                f"{'SYMBOL':<10} {'NAME':<24} {'YIELD':>7} {'FREQ':<12} "
+                f"{'EX':<12} {'PAYABLE':<12}"
+            )
+            lines.append("-" * 94)
+            for row in report.upcoming:
+                lines.append(self._format_upcoming_row(row))
+            lines.append("=" * 94)
+
+        return "\n".join(lines)
+
+    @staticmethod
+    def _format_income_row(row: DividendIncomeRow) -> str:
+        return (
+            f"{row.symbol:<10} {row.name[:32]:<32} "
+            f"{row.amount:>15,.2f} {row.currency}"
+        )
+
+    @staticmethod
+    def _format_upcoming_row(row: UpcomingDividendRow) -> str:
+        yield_str = f"{row.yield_pct:.2f}%" if row.yield_pct is not None else ""
+        frequency = row.frequency or ""
+        ex_date = row.ex_date or ""
+        payable = row.payable_date or ""
+        return (
+            f"{row.symbol:<10} {row.name[:24]:<24} {yield_str:>7} "
+            f"{frequency:<12} {ex_date:<12} {payable:<12}"
+        )
+
+    def format_networth(self, report: NetWorthReport) -> str:
+        """Format net worth as a summary table plus optional accounts."""
+        lines = [""]
+        lines.append("=" * 80)
+        lines.append(f"Net worth ({report.scope}) {report.currency}")
+        lines.append("=" * 80)
+        lines.append(
+            f"{'Current':<22} {report.current_amount:>15,.2f} {report.currency}"
+        )
+        if report.start_date is not None and report.start_amount is not None:
+            lines.append(
+                f"{'Start (' + report.start_date + ')':<22} "
+                f"{report.start_amount:>15,.2f} {report.currency}"
+            )
+        change_pct = (
+            f" ({report.change_pct:+.1f}%)" if report.change_pct is not None else ""
+        )
+        lines.append(
+            f"{'Change':<22} {report.change:>+15,.2f} {report.currency}{change_pct}"
+        )
+        lines.append("=" * 80)
+
+        if report.accounts:
+            lines.append("")
+            lines.append("=" * 80)
+            lines.append("Wealthsimple accounts")
+            lines.append("=" * 80)
+            lines.append(f"{'Account':<40} {'Number':<20} {'Value':>18}")
+            lines.append("-" * 80)
+            for acc in report.accounts:
+                lines.append(
+                    f"{acc.description[:40]:<40} {acc.number:<20} "
+                    f"{acc.value:>15,.2f} {acc.currency}"
+                )
+            lines.append("=" * 80)
+
+        if report.external:
+            lines.append("")
+            lines.append("=" * 80)
+            lines.append("External accounts")
+            lines.append("=" * 80)
+            lines.append(f"{'Name':<28} {'Institution':<22} {'Amount':>18}")
+            lines.append("-" * 80)
+            for entity in report.external:
+                lines.append(
+                    f"{entity.name[:28]:<28} {entity.institution[:22]:<22} "
+                    f"{entity.amount:>15,.2f} {entity.currency}"
+                )
+            lines.append("=" * 80)
+
+        return "\n".join(lines)
+
+    def format_performance(self, report: PerformanceReport) -> str:
+        """Format performance as summary plus realized and unrealized sections."""
+        lines = [""]
+        title = f"Performance since {report.since} ({report.currency})"
+        if report.account_label:
+            title = f"{title} - {report.account_label}"
+        lines.append("=" * 80)
+        lines.append(title)
+        lines.append("=" * 80)
+        lines.append(
+            f"{'Net liquidation':<22} {report.net_liquidation:>15,.2f} {report.currency}"
+        )
+        lines.append(
+            f"{'Net deposits':<22} {report.net_deposits:>15,.2f} {report.currency}"
+        )
+        return_str = f"{report.return_amount:>+15,.2f} {report.currency}"
+        if report.return_rate is not None:
+            return_str += f" ({report.return_rate:+.1f}%)"
+        lines.append(f"{'Simple return':<22} {return_str}")
+        lines.append(
+            f"{'Realized gains':<22} {report.realized_total:>+15,.2f} {report.currency}"
+        )
+        lines.append("=" * 80)
+
+        if report.realized:
+            lines.append("")
+            lines.append("=" * 80)
+            lines.append("Realized by security")
+            lines.append("=" * 80)
+            lines.append(f"{'SYMBOL':<10} {'NAME':<32} {'AMOUNT':>18}")
+            lines.append("-" * 80)
+            for row in report.realized:
+                lines.append(
+                    f"{row.symbol:<10} {row.name[:32]:<32} "
+                    f"{row.amount:>15,.2f} {row.currency}"
+                )
+            lines.append("=" * 80)
+
+        if report.unrealized:
+            lines.append("")
+            lines.append("=" * 80)
+            lines.append("Unrealized P&L by account")
+            lines.append("=" * 80)
+            lines.append(f"{'Account':<48} {'Amount':>16} {'Rate':>10}")
+            lines.append("-" * 80)
+            for row in report.unrealized:
+                rate = f"{row.rate:.1f}%" if row.rate is not None else ""
+                lines.append(
+                    f"{row.account_label[:48]:<48} {row.amount:>+13,.2f} "
+                    f"{row.currency} {rate:>10}"
+                )
+            lines.append("=" * 80)
+
+        return "\n".join(lines)
+
 
 class JsonFormatter:
     """Format data as JSON."""
@@ -245,6 +455,18 @@ class JsonFormatter:
 
         return json.dumps(data, indent=2)
 
+    def format_dividends(self, report: DividendsReport) -> str:
+        """Format dividend report as a JSON object."""
+        return json.dumps(asdict(report), indent=2)
+
+    def format_networth(self, report: NetWorthReport) -> str:
+        """Format net worth as a JSON object."""
+        return json.dumps(asdict(report), indent=2)
+
+    def format_performance(self, report: PerformanceReport) -> str:
+        """Format performance as a JSON object."""
+        return json.dumps(asdict(report), indent=2)
+
 
 class CsvFormatter:
     """Format data as CSV."""
@@ -258,11 +480,31 @@ class CsvFormatter:
         writer = csv.writer(output)
 
         # Write header
-        writer.writerow(["description", "number", "value", "currency"])
+        writer.writerow(
+            [
+                "description",
+                "number",
+                "value",
+                "currency",
+                "net_deposits",
+                "return_amount",
+                "return_rate",
+            ]
+        )
 
         # Write data
         for acc in accounts:
-            writer.writerow([acc.description, acc.number, acc.value, acc.currency])
+            writer.writerow(
+                [
+                    acc.description,
+                    acc.number,
+                    acc.value,
+                    acc.currency,
+                    acc.net_deposits,
+                    acc.return_amount,
+                    acc.return_rate if acc.return_rate is not None else "",
+                ]
+            )
 
         return output.getvalue()
 
@@ -284,6 +526,12 @@ class CsvFormatter:
                 "currency",
                 "sign",
                 "account_label",
+                "fees",
+                "fx_rate",
+                "realized_pnl",
+                "withholding_tax",
+                "asset_symbol",
+                "merchant",
             ]
         )
 
@@ -298,6 +546,12 @@ class CsvFormatter:
                     act.currency,
                     act.sign,
                     act.account_label or "",
+                    act.fees if act.fees is not None else "",
+                    act.fx_rate if act.fx_rate is not None else "",
+                    act.realized_pnl if act.realized_pnl is not None else "",
+                    act.withholding_tax if act.withholding_tax is not None else "",
+                    act.asset_symbol or "",
+                    act.merchant or "",
                 ]
             )
 
@@ -368,6 +622,158 @@ class CsvFormatter:
                 ]
             )
 
+        return output.getvalue()
+
+    def format_dividends(self, report: DividendsReport) -> str:
+        """Format dividend report as one or two CSV tables."""
+        output = StringIO()
+        writer = csv.writer(output)
+
+        if report.income:
+            writer.writerow(["symbol", "name", "amount", "currency"])
+            for row in report.income:
+                writer.writerow([row.symbol, row.name, row.amount, row.currency])
+
+        if report.income and report.upcoming:
+            writer.writerow([])
+
+        if report.upcoming:
+            writer.writerow(
+                [
+                    "symbol",
+                    "name",
+                    "yield_pct",
+                    "frequency",
+                    "ex_date",
+                    "record_date",
+                    "payable_date",
+                ]
+            )
+            for row in report.upcoming:
+                writer.writerow(
+                    [
+                        row.symbol,
+                        row.name,
+                        row.yield_pct if row.yield_pct is not None else "",
+                        row.frequency or "",
+                        row.ex_date or "",
+                        row.record_date or "",
+                        row.payable_date or "",
+                    ]
+                )
+
+        return output.getvalue()
+
+    def format_networth(self, report: NetWorthReport) -> str:
+        """Format net worth as summary plus history CSV tables."""
+        output = StringIO()
+        writer = csv.writer(output)
+        writer.writerow(
+            [
+                "scope",
+                "currency",
+                "current_amount",
+                "start_date",
+                "start_amount",
+                "change",
+                "change_pct",
+            ]
+        )
+        writer.writerow(
+            [
+                report.scope,
+                report.currency,
+                report.current_amount,
+                report.start_date or "",
+                report.start_amount if report.start_amount is not None else "",
+                report.change,
+                report.change_pct if report.change_pct is not None else "",
+            ]
+        )
+        if report.history:
+            writer.writerow([])
+            writer.writerow(["date", "amount", "currency"])
+            for point in report.history:
+                writer.writerow([point.date, point.amount, point.currency])
+        if report.accounts:
+            writer.writerow([])
+            writer.writerow(["description", "number", "value", "currency"])
+            for acc in report.accounts:
+                writer.writerow([acc.description, acc.number, acc.value, acc.currency])
+        if report.external:
+            writer.writerow([])
+            writer.writerow(
+                ["name", "institution", "entity_type", "amount", "currency"]
+            )
+            for entity in report.external:
+                writer.writerow(
+                    [
+                        entity.name,
+                        entity.institution,
+                        entity.entity_type,
+                        entity.amount,
+                        entity.currency,
+                    ]
+                )
+        return output.getvalue()
+
+    def format_performance(self, report: PerformanceReport) -> str:
+        """Format performance as summary plus breakdown CSV tables."""
+        output = StringIO()
+        writer = csv.writer(output)
+        writer.writerow(
+            [
+                "since",
+                "currency",
+                "net_liquidation",
+                "net_deposits",
+                "return_amount",
+                "return_rate",
+                "realized_total",
+                "account_label",
+            ]
+        )
+        writer.writerow(
+            [
+                report.since,
+                report.currency,
+                report.net_liquidation,
+                report.net_deposits,
+                report.return_amount,
+                report.return_rate if report.return_rate is not None else "",
+                report.realized_total,
+                report.account_label or "",
+            ]
+        )
+        if report.realized:
+            writer.writerow([])
+            writer.writerow(["symbol", "name", "amount", "currency"])
+            for row in report.realized:
+                writer.writerow([row.symbol, row.name, row.amount, row.currency])
+        if report.unrealized:
+            writer.writerow([])
+            writer.writerow(["account_label", "amount", "rate", "currency"])
+            for row in report.unrealized:
+                writer.writerow(
+                    [
+                        row.account_label,
+                        row.amount,
+                        row.rate if row.rate is not None else "",
+                        row.currency,
+                    ]
+                )
+        if report.history:
+            writer.writerow([])
+            writer.writerow(["date", "net_liquidation", "net_deposits", "currency"])
+            for point in report.history:
+                writer.writerow(
+                    [
+                        point.date,
+                        point.net_liquidation,
+                        point.net_deposits,
+                        point.currency,
+                    ]
+                )
         return output.getvalue()
 
 

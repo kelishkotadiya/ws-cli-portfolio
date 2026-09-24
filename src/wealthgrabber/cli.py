@@ -8,6 +8,9 @@ from .activities import get_account_id_by_number, print_activities
 from .assets import print_assets
 from .auth import get_authenticated_client
 from .auth import logout as auth_logout
+from .dividends import print_dividends
+from .networth import print_networth
+from .performance import print_performance
 
 app = typer.Typer(help="Wealthsimple Account Viewer CLI", no_args_is_help=True)
 
@@ -18,6 +21,22 @@ class OutputFormat(str, Enum):
     table = "table"
     json = "json"
     csv = "csv"
+
+
+class NetWorthScope(str, Enum):
+    """Net worth account scope."""
+
+    household = "household"
+    own = "own"
+
+
+def version_callback(value: bool | None) -> None:
+    """Print version and exit when --version or -V is passed (eager)."""
+    if value:
+        from . import __version__
+
+        typer.echo(f"wealthgrabber version {__version__}")
+        raise typer.Exit()
 
 
 @app.command()
@@ -120,6 +139,13 @@ def activities(
     limit: int = typer.Option(
         50, "--limit", "-n", help="Maximum number of activities per account."
     ),
+    since: Optional[str] = typer.Option(
+        None, "--since", "-s", help="Start date YYYY-MM-DD."
+    ),
+    until: Optional[str] = typer.Option(None, "--until", help="End date YYYY-MM-DD."),
+    activity_type: Optional[str] = typer.Option(
+        None, "--type", "-t", help="Filter by activity type substring (e.g. DIY_BUY)."
+    ),
     output_format: OutputFormat = typer.Option(
         OutputFormat.table, "--format", "-f", help="Output format."
     ),
@@ -148,6 +174,10 @@ def activities(
             limit=limit,
             output_format=output_format.value,
             verbose=verbose,
+            account_number=account,
+            activity_type=activity_type,
+            since=since,
+            until=until,
         )
     except typer.Exit:
         raise
@@ -228,11 +258,172 @@ def assets(
         raise typer.Exit(code=1)
 
 
+@app.command()
+def dividends(
+    ctx: typer.Context,
+    account: Optional[str] = typer.Option(
+        None, "--account", "-a", help="Filter by account number (e.g., 'TFSA-001')."
+    ),
+    since: Optional[str] = typer.Option(
+        None,
+        "--since",
+        "-s",
+        help="Start date YYYY-MM-DD. Defaults to January 1 of this year.",
+    ),
+    currency: str = typer.Option(
+        "CAD", "--currency", help="Currency for amounts and yield."
+    ),
+    no_upcoming: bool = typer.Option(
+        False,
+        "--no-upcoming",
+        help="Skip the upcoming dividend calendar.",
+    ),
+    output_format: OutputFormat = typer.Option(
+        OutputFormat.table, "--format", "-f", help="Output format."
+    ),
+):
+    """
+    Show dividend income and upcoming announced dates.
+    """
+    verbose = ctx.obj.get("verbose") if ctx.obj else False
+    ws = get_authenticated_client(verbose=verbose)
+    if not ws:
+        print("Could not authenticate.")
+        raise typer.Exit(code=1)
+
+    try:
+        account_id = None
+        if account:
+            account_id = get_account_id_by_number(ws, account)
+            if not account_id:
+                print(f"Account '{account}' not found.")
+                raise typer.Exit(code=1)
+
+        print_dividends(
+            ws,
+            account_id=account_id,
+            since=since,
+            currency=currency,
+            include_upcoming=not no_upcoming,
+            output_format=output_format.value,
+            verbose=verbose,
+            account_label=account,
+        )
+    except typer.Exit:
+        raise
+    except Exception as e:
+        print(f"Error fetching dividends: {e}")
+        raise typer.Exit(code=1)
+
+
+@app.command()
+def networth(
+    ctx: typer.Context,
+    scope: NetWorthScope = typer.Option(
+        NetWorthScope.household,
+        "--scope",
+        help="HOUSEHOLD includes linked members; OWN is this identity only.",
+    ),
+    days: int = typer.Option(
+        30, "--days", help="Number of days of history (default 30)."
+    ),
+    currency: str = typer.Option("CAD", "--currency", help="Currency for amounts."),
+    include_accounts: bool = typer.Option(
+        False,
+        "--accounts",
+        help="Also list Wealthsimple and linked external accounts.",
+    ),
+    output_format: OutputFormat = typer.Option(
+        OutputFormat.table, "--format", "-f", help="Output format."
+    ),
+):
+    """
+    Show household or own net worth and recent history.
+    """
+    verbose = ctx.obj.get("verbose") if ctx.obj else False
+    ws = get_authenticated_client(verbose=verbose)
+    if not ws:
+        print("Could not authenticate.")
+        raise typer.Exit(code=1)
+
+    try:
+        print_networth(
+            ws,
+            scope=scope.value.upper(),
+            currency=currency,
+            days=days,
+            include_accounts=include_accounts,
+            output_format=output_format.value,
+            verbose=verbose,
+        )
+    except Exception as e:
+        print(f"Error fetching net worth: {e}")
+        raise typer.Exit(code=1)
+
+
+@app.command()
+def performance(
+    ctx: typer.Context,
+    account: Optional[str] = typer.Option(
+        None, "--account", "-a", help="Filter by account number (e.g., 'TFSA-001')."
+    ),
+    since: Optional[str] = typer.Option(
+        None,
+        "--since",
+        "-s",
+        help="Start date YYYY-MM-DD. Defaults to January 1 of this year.",
+    ),
+    currency: str = typer.Option("CAD", "--currency", help="Currency for amounts."),
+    output_format: OutputFormat = typer.Option(
+        OutputFormat.table, "--format", "-f", help="Output format."
+    ),
+):
+    """
+    Show simple returns, realized gains, and unrealized P&L.
+    """
+    verbose = ctx.obj.get("verbose") if ctx.obj else False
+    ws = get_authenticated_client(verbose=verbose)
+    if not ws:
+        print("Could not authenticate.")
+        raise typer.Exit(code=1)
+
+    try:
+        account_id = None
+        if account:
+            account_id = get_account_id_by_number(ws, account)
+            if not account_id:
+                print(f"Account '{account}' not found.")
+                raise typer.Exit(code=1)
+
+        print_performance(
+            ws,
+            account_id=account_id,
+            since=since,
+            currency=currency,
+            output_format=output_format.value,
+            verbose=verbose,
+            account_label=account,
+        )
+    except typer.Exit:
+        raise
+    except Exception as e:
+        print(f"Error fetching performance: {e}")
+        raise typer.Exit(code=1)
+
+
 @app.callback()
 def main(
     ctx: typer.Context,
     verbose: bool = typer.Option(
         False, "--verbose", "-v", help="Show detailed status messages during execution."
+    ),
+    version: Optional[bool] = typer.Option(
+        None,
+        "--version",
+        "-V",
+        help="Show the version and exit.",
+        callback=version_callback,
+        is_eager=True,
     ),
 ):
     """

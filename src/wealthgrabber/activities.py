@@ -89,6 +89,29 @@ def _enhance_description(
     return description
 
 
+def _optional_float(value: object) -> Optional[float]:
+    """Parse an optional numeric/Money field."""
+    if value is None or value == "":
+        return None
+    if isinstance(value, dict):
+        raw = value.get("amount")
+        if raw is None:
+            return None
+        return float(raw)
+    return float(value)
+
+
+def _matches_activity_type(activity: dict, activity_type: str) -> bool:
+    needle = activity_type.upper()
+    return needle in (activity.get("type") or "").upper()
+
+
+def _as_datetime(value: Optional[str]) -> Optional[datetime]:
+    if not value:
+        return None
+    return datetime.strptime(value, "%Y-%m-%d")
+
+
 def _transform_activity(
     ws: WealthsimpleAPI,
     activity: dict,
@@ -121,7 +144,46 @@ def _transform_activity(
         currency=currency,
         sign=sign,
         account_label=account_label,
+        fees=_optional_float(activity.get("fees")),
+        fx_rate=_optional_float(activity.get("fxRate")),
+        realized_pnl=_optional_float(activity.get("realizedPnl")),
+        withholding_tax=_optional_float(activity.get("withholdingTaxAmount")),
+        asset_symbol=activity.get("assetSymbol") or None,
+        merchant=activity.get("spendMerchant") or None,
     )
+
+
+def _fetch_raw_activities(
+    ws: WealthsimpleAPI,
+    account_id: str,
+    limit: int,
+    dividends_only: bool,
+    activity_type: Optional[str],
+    start_date: Optional[datetime],
+    end_date: Optional[datetime],
+) -> list:
+    """Fetch and filter raw activities for one account."""
+    kwargs: dict = {}
+    if start_date:
+        kwargs["start_date"] = start_date
+    if end_date:
+        kwargs["end_date"] = end_date
+
+    needs_filter = dividends_only or bool(activity_type)
+    if needs_filter:
+        kwargs["load_all"] = True
+        activities = ws.get_activities(account_id, **kwargs)
+        if dividends_only:
+            activities = [a for a in activities if is_dividend_activity(a)]
+        if activity_type:
+            activities = [
+                a for a in activities if _matches_activity_type(a, activity_type)
+            ]
+        return activities[:limit]
+
+    kwargs["how_many"] = limit
+    activities = ws.get_activities(account_id, **kwargs)
+    return activities[:limit]
 
 
 def _process_account_activities(
@@ -131,6 +193,9 @@ def _process_account_activities(
     security_cache: dict,
     dividends_only: bool,
     limit: int,
+    activity_type: Optional[str] = None,
+    start_date: Optional[datetime] = None,
+    end_date: Optional[datetime] = None,
 ) -> list[ActivityData]:
     """Process activities for a single account.
 
@@ -141,16 +206,22 @@ def _process_account_activities(
         security_cache: Shared cache for security lookups
         dividends_only: Whether to filter for dividend activities only
         limit: Maximum number of activities to return
+        activity_type: Optional substring filter on activity type
+        start_date: Optional start datetime forwarded to the API
+        end_date: Optional end datetime forwarded to the API
 
     Returns:
         List of ActivityData objects for the account
     """
-    activities = ws.get_activities(account_id)
-
-    if dividends_only:
-        activities = [a for a in activities if is_dividend_activity(a)]
-
-    activities = activities[:limit]
+    activities = _fetch_raw_activities(
+        ws,
+        account_id,
+        limit,
+        dividends_only,
+        activity_type,
+        start_date,
+        end_date,
+    )
 
     return [
         _transform_activity(ws, act, security_cache, account_label)
@@ -163,6 +234,10 @@ def get_activities_data(
     account_id: Optional[str] = None,
     dividends_only: bool = False,
     limit: int = 50,
+    account_number: Optional[str] = None,
+    activity_type: Optional[str] = None,
+    since: Optional[str] = None,
+    until: Optional[str] = None,
 ) -> list[ActivityData]:
     """Fetch and transform activity data.
 
@@ -171,17 +246,31 @@ def get_activities_data(
         account_id: Optional account ID to filter activities
         dividends_only: Whether to include only dividend activities
         limit: Maximum number of activities per account
+        account_number: Optional account number for labeling in single-account mode
+        activity_type: Optional substring filter on activity type
+        since: Optional start date YYYY-MM-DD
+        until: Optional end date YYYY-MM-DD
 
     Returns:
         List of ActivityData objects
     """
     result = []
     security_cache: dict[str, str] = {}
+    start_date = _as_datetime(since)
+    end_date = _as_datetime(until)
 
     if account_id:
-        # Single account mode: no account label
+        # Single account mode: use account number as label if provided
         result = _process_account_activities(
-            ws, account_id, None, security_cache, dividends_only, limit
+            ws,
+            account_id,
+            account_number,
+            security_cache,
+            dividends_only,
+            limit,
+            activity_type,
+            start_date,
+            end_date,
         )
     else:
         # All accounts mode - fetch accounts for labeling
@@ -194,7 +283,15 @@ def get_activities_data(
             acc_label = f"{account.get('description', 'Unknown')} ({account.get('number', 'N/A')})"
             result.extend(
                 _process_account_activities(
-                    ws, acc_id, acc_label, security_cache, dividends_only, limit
+                    ws,
+                    acc_id,
+                    acc_label,
+                    security_cache,
+                    dividends_only,
+                    limit,
+                    activity_type,
+                    start_date,
+                    end_date,
                 )
             )
 
@@ -208,6 +305,10 @@ def print_activities(
     limit: int = 50,
     output_format: str = "table",
     verbose: bool = False,
+    account_number: Optional[str] = None,
+    activity_type: Optional[str] = None,
+    since: Optional[str] = None,
+    until: Optional[str] = None,
 ) -> None:
     """Fetch and print activities.
 
@@ -218,57 +319,31 @@ def print_activities(
         limit: Maximum number of activities per account
         output_format: Output format - 'table', 'json', or 'csv' (default 'table')
         verbose: If True, print status messages during execution
+        account_number: Optional account number for labeling in single-account mode
+        activity_type: Optional substring filter on activity type
+        since: Optional start date YYYY-MM-DD
+        until: Optional end date YYYY-MM-DD
     """
     if verbose:
         print("\nFetching activities...")
 
-    activities_data = get_activities_data(ws, account_id, dividends_only, limit)
+    activities_data = get_activities_data(
+        ws,
+        account_id,
+        dividends_only,
+        limit,
+        account_number,
+        activity_type,
+        since,
+        until,
+    )
 
     if not activities_data:
         print("No activities found.")
         return
 
     formatter = get_formatter(output_format)
-
-    if output_format == "table":
-        # For table format, group by account if multi-account
-        from itertools import groupby
-
-        if not account_id:
-            # Multi-account mode: group by account label
-            activities_data_sorted = sorted(
-                activities_data, key=lambda a: a.account_label or ""
-            )
-
-            for account_label, group_iter in groupby(
-                activities_data_sorted, key=lambda a: a.account_label
-            ):
-                group = list(group_iter)
-                # Print header with account label
-                suffix = " - Dividends Only" if dividends_only else ""
-                print("\n" + "=" * 80)
-                if account_label:
-                    print(f"Account: {account_label}{suffix}")
-                print("=" * 80)
-                print(f"{'Date':<12} {'Type':<14} {'Description':<34} {'Amount':>18}")
-                print("-" * 80)
-
-                # Print activities using formatter (will skip account header)
-                for act in group:
-                    print(
-                        f"{act.date:<12} {act.activity_type:<14} {act.description:<34} "
-                        f"{act.sign}{act.amount:>14,.2f} {act.currency}"
-                    )
-
-            print("=" * 80)
-        else:
-            # Single account mode
-            output = formatter.format_activities(activities_data)
-            print(output)
-    else:
-        # For JSON and CSV, use formatter directly
-        output = formatter.format_activities(activities_data)
-        print(output)
+    print(formatter.format_activities(activities_data))
 
 
 def _format_date(iso_date: str) -> str:

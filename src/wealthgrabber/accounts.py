@@ -4,20 +4,43 @@ from .formatters import get_formatter
 from .models import AccountData
 
 
-def _extract_account_value(account: dict) -> tuple[float, str]:
-    """Extract account value and currency from account data.
+def _money_amount(value: object) -> float:
+    """Extract a numeric amount from a Money-like value."""
+    if value is None:
+        return 0.0
+    if isinstance(value, dict):
+        nested = value.get("amount")
+        if isinstance(nested, dict):
+            return float(nested.get("amount") or 0)
+        return float(nested or 0)
+    return float(value or 0)
 
-    Args:
-        account: Account data dict from API
 
-    Returns:
-        Tuple of (value, currency)
-    """
-    financials = account.get("financials", {})
-    net_liq = financials.get("currentCombined", {}).get("netLiquidationValue", {})
-    value = float(net_liq.get("amount", 0))
-    currency = net_liq.get("currency", "CAD")
-    return value, currency
+def _rate_pct(raw: object) -> float | None:
+    """Normalize a rate to percent. Values in [-1, 1] are treated as fractions."""
+    if raw is None:
+        return None
+    value = float(raw)
+    if abs(value) <= 1:
+        return value * 100
+    return value
+
+
+def _extract_account_financials(
+    account: dict,
+) -> tuple[float, str, float, float, float | None]:
+    """Extract value, currency, net deposits, and simple return from account data."""
+    combined = (account.get("financials") or {}).get("currentCombined") or {}
+    net_liq = combined.get("netLiquidationValue") or {}
+    value = _money_amount(net_liq)
+    currency = net_liq.get("currency", "CAD") if isinstance(net_liq, dict) else "CAD"
+    net_deposits = _money_amount(combined.get("netDeposits"))
+    simple = combined.get("simpleReturns") or {}
+    return_amount = _money_amount(
+        simple.get("amount") if isinstance(simple, dict) else None
+    )
+    return_rate = _rate_pct(simple.get("rate") if isinstance(simple, dict) else None)
+    return value, currency, net_deposits, return_amount, return_rate
 
 
 def _is_non_liquid_account(description: str) -> bool:
@@ -85,8 +108,9 @@ def get_accounts_data(
         if not _should_include_account(is_non_liquid, liquid_only, not_liquid):
             continue
 
-        # Extract value and currency
-        value, currency = _extract_account_value(account)
+        value, currency, net_deposits, return_amount, return_rate = (
+            _extract_account_financials(account)
+        )
 
         if value == 0 and not show_zero_balances:
             continue
@@ -97,6 +121,9 @@ def get_accounts_data(
                 number=number,
                 value=value,
                 currency=currency,
+                net_deposits=net_deposits,
+                return_amount=return_amount,
+                return_rate=return_rate,
             )
         )
 

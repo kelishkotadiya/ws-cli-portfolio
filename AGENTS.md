@@ -43,11 +43,14 @@ src/wealthgrabber/
 ├── __init__.py
 ├── __main__.py
 ├── auth.py              # Authentication (keyring)
-├── models.py            # Data models (AccountData, ActivityData, PositionData)
+├── models.py            # Data models (AccountData, ActivityData, PositionData, DividendsReport, NetWorthReport, PerformanceReport)
 ├── formatters.py        # Output formatters (Table, JSON, CSV)
 ├── accounts.py          # Account management logic
 ├── activities.py        # Activity/transaction logic
 ├── assets.py            # Asset position logic
+├── dividends.py         # Dividend income and upcoming dates
+├── networth.py          # Household/own net worth and history
+├── performance.py       # Simple returns, realized, unrealized P&L
 ├── cli.py               # Typer CLI application
 tests/                   # Pytest suite
 pyproject.toml           # Project configuration
@@ -58,10 +61,13 @@ pyproject.toml           # Project configuration
 The application follows a clean three-layer architecture for data retrieval and output:
 
 ### Layer 1: Data Retrieval
-Functions in each module (`accounts.py`, `activities.py`, `assets.py`) fetch and transform API data:
+Functions in each module (`accounts.py`, `activities.py`, `assets.py`, `dividends.py`, `networth.py`, `performance.py`) fetch and transform API data:
 - **`get_accounts_data()`** - Fetches accounts and returns `list[AccountData]`
 - **`get_activities_data()`** - Fetches activities and returns `list[ActivityData]`
 - **`get_assets_data()`** - Fetches positions and returns `list[PositionData]`
+- **`get_dividends_data()`** - Fetches dividend income and upcoming dates and returns `DividendsReport`
+- **`get_networth_data()`** - Fetches net worth and history and returns `NetWorthReport`
+- **`get_performance_data()`** - Fetches returns and P&L and returns `PerformanceReport`
 
 These functions handle:
 - API calls and error handling
@@ -71,9 +77,12 @@ These functions handle:
 
 ### Layer 2: Data Models
 `models.py` defines simple, serializable dataclasses:
-- **`AccountData`** - `description`, `number`, `value`, `currency`
-- **`ActivityData`** - `date`, `activity_type`, `description`, `amount`, `currency`, `sign`, `account_label`
+- **`AccountData`** - `description`, `number`, `value`, `currency`, `net_deposits`, `return_amount`, `return_rate`
+- **`ActivityData`** - `date`, `activity_type`, `description`, `amount`, `currency`, `sign`, `account_label`, plus optional `fees`, `fx_rate`, `realized_pnl`, `withholding_tax`, `asset_symbol`, `merchant`
 - **`PositionData`** - `symbol`, `name`, `quantity`, `market_value`, `book_value`, `currency`, `pnl`, `pnl_pct`, `account_label`
+- **`DividendsReport`** - `since`, `currency`, `total_amount`, `income` (`DividendIncomeRow`), `upcoming` (`UpcomingDividendRow`), `account_label`
+- **`NetWorthReport`** - `scope`, `currency`, `current_amount`, history, optional accounts/external rows
+- **`PerformanceReport`** - `since`, net liquidation/deposits, simple return, realized, unrealized, history
 
 ### Layer 3: Formatters
 `formatters.py` implements output formatters using a protocol-based design:
@@ -82,6 +91,9 @@ These functions handle:
 - `format_accounts(accounts: Sequence[AccountData]) -> str`
 - `format_activities(activities: Sequence[ActivityData]) -> str`
 - `format_positions(positions: Sequence[PositionData], show_totals: bool, group_label: Optional[str]) -> str`
+- `format_dividends(report: DividendsReport) -> str`
+- `format_networth(report: NetWorthReport) -> str`
+- `format_performance(report: PerformanceReport) -> str`
 
 **Concrete Implementations:**
 - **`TableFormatter`** - ASCII tables with borders, alignment, and totals (default)
@@ -114,16 +126,25 @@ All commands support `--format` option with choices: `table` (default), `json`, 
 wealthgrabber list
 wealthgrabber activities
 wealthgrabber assets
+wealthgrabber dividends
+wealthgrabber networth
+wealthgrabber performance
 
 # JSON format
 wealthgrabber list --format json
 wealthgrabber activities --format json --dividends
 wealthgrabber assets --format json --by-account
+wealthgrabber dividends --format json --no-upcoming
+wealthgrabber networth --format json --scope own
+wealthgrabber performance --format json
 
 # CSV format
 wealthgrabber list --format csv > accounts.csv
 wealthgrabber activities --format csv > activities.csv
 wealthgrabber assets --format csv > assets.csv
+wealthgrabber dividends --format csv > dividends.csv
+wealthgrabber networth --format csv > networth.csv
+wealthgrabber performance --format csv > performance.csv
 ```
 
 ## Adding New Output Formats

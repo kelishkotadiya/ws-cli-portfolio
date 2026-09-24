@@ -37,6 +37,9 @@ def test_get_accounts_data_valid(mock_ws_client):
     assert result[0].description == "Test Account"
     assert result[0].number == "123456"
     assert result[0].value == 1000.50
+    assert result[0].net_deposits == 0.0
+    assert result[0].return_amount == 0.0
+    assert result[0].return_rate is None
 
 
 def test_print_accounts_output(mock_ws_client, capsys):
@@ -62,10 +65,11 @@ def test_print_accounts_output(mock_ws_client, capsys):
     assert any(
         "Account" in line and "Number" in line and "Value" in line for line in lines
     )
+    assert any("Deposits" in line and "Return" in line for line in lines)
 
     # Validate separator lines
-    assert any(line.strip() == "=" * 80 for line in lines)
-    assert any(line.strip() == "-" * 80 for line in lines)
+    assert any(set(line.strip()) == {"="} for line in lines)
+    assert any(set(line.strip()) == {"-"} for line in lines)
 
     # Find data row (contains all expected values)
     data_row = None
@@ -104,6 +108,30 @@ def test_get_accounts_data_zero_balance_filtering(mock_ws_client):
     assert result[0].description == "Zero Balance Account"
 
 
+def test_get_accounts_data_extracts_deposits_and_returns(mock_ws_client):
+    """Test that net deposits and simple returns are copied from financials."""
+    mock_ws_client.get_accounts.return_value = [
+        {
+            "description": "My TFSA",
+            "number": "TFSA-001",
+            "financials": {
+                "currentCombined": {
+                    "netLiquidationValue": {"amount": "5000.00", "currency": "CAD"},
+                    "netDeposits": {"amount": "4000.00", "currency": "CAD"},
+                    "simpleReturns": {
+                        "amount": {"amount": "250.00", "currency": "CAD"},
+                        "rate": 0.0625,
+                    },
+                }
+            },
+        }
+    ]
+    result = get_accounts_data(mock_ws_client)
+    assert result[0].net_deposits == 4000.0
+    assert result[0].return_amount == 250.0
+    assert result[0].return_rate == 6.25
+
+
 def test_print_accounts_json_format(mock_ws_client, capsys):
     """Test print_accounts with JSON format."""
     import json
@@ -131,6 +159,8 @@ def test_print_accounts_json_format(mock_ws_client, capsys):
     assert data[0]["number"] == "ACC-001"
     assert data[0]["value"] == 1000.00
     assert data[0]["currency"] == "CAD"
+    assert data[0]["net_deposits"] == 0.0
+    assert data[0]["return_amount"] == 0.0
 
 
 def _get_account_descriptions(accounts) -> set[str]:

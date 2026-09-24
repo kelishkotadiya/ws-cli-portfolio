@@ -141,6 +141,10 @@ def test_activities_command_success(mock_print, mock_get_auth):
         limit=50,
         output_format="table",
         verbose=False,
+        account_number=None,
+        activity_type=None,
+        since=None,
+        until=None,
     )
 
 
@@ -164,6 +168,10 @@ def test_activities_command_with_account(mock_get_account, mock_print, mock_get_
         limit=50,
         output_format="table",
         verbose=False,
+        account_number="TFSA-001",
+        activity_type=None,
+        since=None,
+        until=None,
     )
 
 
@@ -198,6 +206,10 @@ def test_activities_command_dividends_only(mock_print, mock_get_auth):
         limit=50,
         output_format="table",
         verbose=False,
+        account_number=None,
+        activity_type=None,
+        since=None,
+        until=None,
     )
 
 
@@ -218,6 +230,10 @@ def test_activities_command_with_limit(mock_print, mock_get_auth):
         limit=25,
         output_format="table",
         verbose=False,
+        account_number=None,
+        activity_type=None,
+        since=None,
+        until=None,
     )
 
 
@@ -263,6 +279,10 @@ def test_activities_command_short_flags(mock_print, mock_get_auth):
         limit=10,
         output_format="table",
         verbose=False,
+        account_number=None,
+        activity_type=None,
+        since=None,
+        until=None,
     )
 
 
@@ -441,3 +461,262 @@ def test_assets_command_profits_with_by_account(mock_print, mock_get_auth):
         verbose=False,
         pnl_filter="profit",
     )
+
+
+# Dividends command tests
+
+
+@patch("wealthgrabber.cli.get_authenticated_client")
+@patch("wealthgrabber.cli.print_dividends")
+def test_dividends_command_success(mock_print, mock_get_auth):
+    """Test dividends command success path."""
+    mock_ws = MagicMock()
+    mock_get_auth.return_value = mock_ws
+
+    result = runner.invoke(app, ["dividends"])
+
+    assert result.exit_code == 0
+    mock_print.assert_called_with(
+        mock_ws,
+        account_id=None,
+        since=None,
+        currency="CAD",
+        include_upcoming=True,
+        output_format="table",
+        verbose=False,
+        account_label=None,
+    )
+
+
+@patch("wealthgrabber.cli.get_authenticated_client")
+@patch("wealthgrabber.cli.print_dividends")
+@patch("wealthgrabber.cli.get_account_id_by_number")
+def test_dividends_command_with_account(mock_get_account, mock_print, mock_get_auth):
+    """Test dividends command with account filter."""
+    mock_ws = MagicMock()
+    mock_get_auth.return_value = mock_ws
+    mock_get_account.return_value = "acc-123"
+
+    result = runner.invoke(
+        app, ["dividends", "--account", "TFSA-001", "--since", "2025-01-01"]
+    )
+
+    assert result.exit_code == 0
+    mock_get_account.assert_called_with(mock_ws, "TFSA-001")
+    mock_print.assert_called_with(
+        mock_ws,
+        account_id="acc-123",
+        since="2025-01-01",
+        currency="CAD",
+        include_upcoming=True,
+        output_format="table",
+        verbose=False,
+        account_label="TFSA-001",
+    )
+
+
+@patch("wealthgrabber.cli.get_authenticated_client")
+@patch("wealthgrabber.cli.get_account_id_by_number")
+def test_dividends_command_account_not_found(mock_get_account, mock_get_auth):
+    """Test dividends command when account is not found."""
+    mock_ws = MagicMock()
+    mock_get_auth.return_value = mock_ws
+    mock_get_account.return_value = None
+
+    result = runner.invoke(app, ["dividends", "--account", "INVALID-999"])
+
+    assert result.exit_code == 1
+    assert "not found" in result.stdout
+
+
+@patch("wealthgrabber.cli.get_authenticated_client")
+@patch("wealthgrabber.cli.print_dividends")
+def test_dividends_command_no_upcoming(mock_print, mock_get_auth):
+    """Test dividends command with --no-upcoming."""
+    mock_ws = MagicMock()
+    mock_get_auth.return_value = mock_ws
+
+    result = runner.invoke(app, ["dividends", "--no-upcoming", "--format", "json"])
+
+    assert result.exit_code == 0
+    mock_print.assert_called_with(
+        mock_ws,
+        account_id=None,
+        since=None,
+        currency="CAD",
+        include_upcoming=False,
+        output_format="json",
+        verbose=False,
+        account_label=None,
+    )
+
+
+@patch("wealthgrabber.cli.get_authenticated_client")
+def test_dividends_command_auth_failure(mock_get_auth):
+    """Test dividends command authentication failure."""
+    mock_get_auth.return_value = None
+
+    result = runner.invoke(app, ["dividends"])
+
+    assert result.exit_code == 1
+    assert "Could not authenticate" in result.stdout
+
+
+@patch("wealthgrabber.cli.get_authenticated_client")
+@patch("wealthgrabber.cli.print_dividends")
+def test_dividends_command_api_error(mock_print, mock_get_auth):
+    """Test dividends command handles API errors."""
+    mock_ws = MagicMock()
+    mock_get_auth.return_value = mock_ws
+    mock_print.side_effect = Exception("API Error")
+
+    result = runner.invoke(app, ["dividends"])
+
+    assert result.exit_code == 1
+    assert "Error fetching dividends" in result.stdout
+
+
+@patch("wealthgrabber.cli.get_authenticated_client")
+@patch("wealthgrabber.cli.print_activities")
+def test_activities_command_since_until_type(mock_print, mock_get_auth):
+    """Test activities command date and type filters."""
+    mock_ws = MagicMock()
+    mock_get_auth.return_value = mock_ws
+
+    result = runner.invoke(
+        app,
+        [
+            "activities",
+            "--since",
+            "2026-01-01",
+            "--until",
+            "2026-03-31",
+            "--type",
+            "DIY_BUY",
+        ],
+    )
+
+    assert result.exit_code == 0
+    mock_print.assert_called_with(
+        mock_ws,
+        account_id=None,
+        dividends_only=False,
+        limit=50,
+        output_format="table",
+        verbose=False,
+        account_number=None,
+        activity_type="DIY_BUY",
+        since="2026-01-01",
+        until="2026-03-31",
+    )
+
+
+@patch("wealthgrabber.cli.get_authenticated_client")
+@patch("wealthgrabber.cli.print_networth")
+def test_networth_command_success(mock_print, mock_get_auth):
+    """Test networth command success path."""
+    mock_ws = MagicMock()
+    mock_get_auth.return_value = mock_ws
+
+    result = runner.invoke(
+        app, ["networth", "--scope", "own", "--days", "90", "--accounts"]
+    )
+
+    assert result.exit_code == 0
+    mock_print.assert_called_with(
+        mock_ws,
+        scope="OWN",
+        currency="CAD",
+        days=90,
+        include_accounts=True,
+        output_format="table",
+        verbose=False,
+    )
+
+
+@patch("wealthgrabber.cli.get_authenticated_client")
+def test_networth_command_auth_failure(mock_get_auth):
+    """Test networth command authentication failure."""
+    mock_get_auth.return_value = None
+    result = runner.invoke(app, ["networth"])
+    assert result.exit_code == 1
+    assert "Could not authenticate" in result.stdout
+
+
+@patch("wealthgrabber.cli.get_authenticated_client")
+@patch("wealthgrabber.cli.print_performance")
+def test_performance_command_success(mock_print, mock_get_auth):
+    """Test performance command success path."""
+    mock_ws = MagicMock()
+    mock_get_auth.return_value = mock_ws
+
+    result = runner.invoke(app, ["performance", "--since", "2026-01-01"])
+
+    assert result.exit_code == 0
+    mock_print.assert_called_with(
+        mock_ws,
+        account_id=None,
+        since="2026-01-01",
+        currency="CAD",
+        output_format="table",
+        verbose=False,
+        account_label=None,
+    )
+
+
+@patch("wealthgrabber.cli.get_authenticated_client")
+@patch("wealthgrabber.cli.print_performance")
+@patch("wealthgrabber.cli.get_account_id_by_number")
+def test_performance_command_with_account(mock_get_account, mock_print, mock_get_auth):
+    """Test performance command with account filter."""
+    mock_ws = MagicMock()
+    mock_get_auth.return_value = mock_ws
+    mock_get_account.return_value = "acc-123"
+
+    result = runner.invoke(app, ["performance", "--account", "TFSA-001"])
+
+    assert result.exit_code == 0
+    mock_print.assert_called_with(
+        mock_ws,
+        account_id="acc-123",
+        since=None,
+        currency="CAD",
+        output_format="table",
+        verbose=False,
+        account_label="TFSA-001",
+    )
+
+
+@patch("wealthgrabber.cli.get_authenticated_client")
+@patch("wealthgrabber.cli.get_account_id_by_number")
+def test_performance_command_account_not_found(mock_get_account, mock_get_auth):
+    """Test performance command when account is not found."""
+    mock_ws = MagicMock()
+    mock_get_auth.return_value = mock_ws
+    mock_get_account.return_value = None
+
+    result = runner.invoke(app, ["performance", "--account", "INVALID-999"])
+
+    assert result.exit_code == 1
+    assert "not found" in result.stdout
+
+
+# Version option tests
+
+
+def test_version_option():
+    """Test --version prints version and exits successfully."""
+    result = runner.invoke(app, ["--version"])
+
+    assert result.exit_code == 0
+    assert "wealthgrabber version" in result.stdout
+    # Version comes from package metadata (0.1.2 in pyproject.toml)
+    assert "0.1.2" in result.stdout or "unknown" in result.stdout
+
+
+def test_version_short_option():
+    """Test -V short flag for version also works."""
+    result = runner.invoke(app, ["-V"])
+
+    assert result.exit_code == 0
+    assert "wealthgrabber version" in result.stdout
