@@ -119,9 +119,15 @@ def _upcoming_rows_for_security(
     security_id: str,
     details: dict,
     as_of: date,
+    market_data: Optional[dict] = None,
 ) -> list[UpcomingDividendRow]:
     stock = details.get("stock") or {}
     symbol, name = _security_label(details, security_id)
+    market_stock = (market_data or {}).get("stock") or {}
+    if symbol == security_id:
+        symbol = market_stock.get("symbol") or security_id
+    if name == security_id:
+        name = market_stock.get("name") or market_stock.get("symbol") or security_id
     frequency = stock.get("dividendFrequency")
     fundamentals = details.get("fundamentals") or {}
     yield_pct = _yield_pct(fundamentals.get("yield"))
@@ -142,6 +148,25 @@ def _upcoming_rows_for_security(
                 payable_date=_date_str(event.get("payableDate")),
             )
         )
+
+    has_unannounced_event = not events or any(
+        _parse_date(event.get("exDividendDate")) is None
+        and _parse_date(event.get("payableDate")) is None
+        for event in events
+    )
+    if not rows and yield_pct is not None and yield_pct > 0 and has_unannounced_event:
+        rows.append(
+            UpcomingDividendRow(
+                symbol=symbol,
+                name=name,
+                yield_pct=yield_pct,
+                frequency=frequency,
+                ex_date=None,
+                record_date=None,
+                payable_date=None,
+            )
+        )
+
     return rows
 
 
@@ -192,8 +217,21 @@ def get_dividends_data(
                 continue
             if not details:
                 continue
-            upcoming.extend(_upcoming_rows_for_security(security_id, details, today))
-        upcoming.sort(key=lambda row: row.ex_date or row.payable_date or "")
+            stock = details.get("stock") or {}
+            market_data = None
+            if not stock.get("symbol") or not stock.get("name"):
+                try:
+                    market_data = ws.get_security_market_data(
+                        security_id, use_cache=False
+                    )
+                except Exception:
+                    pass
+            upcoming.extend(
+                _upcoming_rows_for_security(
+                    security_id, details, today, market_data=market_data
+                )
+            )
+        upcoming.sort(key=lambda row: row.symbol or row.ex_date or row.payable_date or "")
 
     return DividendsReport(
         since=start_date,

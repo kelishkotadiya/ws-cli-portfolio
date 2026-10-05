@@ -120,6 +120,7 @@ def test_upcoming_skips_cash_past_events_and_empty_events(mock_ws_client):
         {"security": {"id": "sec-s-xeqt"}, "accounts": [{"id": "acc-1"}]},
         {"security": {"id": "sec-s-past"}, "accounts": [{"id": "acc-1"}]},
         {"security": {"id": "sec-s-empty"}, "accounts": [{"id": "acc-1"}]},
+        {"security": {"id": "sec-s-zero"}, "accounts": [{"id": "acc-1"}]},
         {"security": {"id": "sec-s-xeqt"}, "accounts": [{"id": "acc-2"}]},
     ]
 
@@ -160,6 +161,11 @@ def test_upcoming_skips_cash_past_events_and_empty_events(mock_ws_client):
                 "fundamentals": {"yield": 0.01},
                 "events": [],
             },
+            "sec-s-zero": {
+                "stock": {"symbol": "ZERO", "name": "Zero Yield"},
+                "fundamentals": {"yield": 0},
+                "events": [],
+            },
         }
         return payloads[security_id]
 
@@ -167,16 +173,25 @@ def test_upcoming_skips_cash_past_events_and_empty_events(mock_ws_client):
 
     result = get_dividends_data(mock_ws_client, since="2026-01-01", as_of=AS_OF)
 
-    assert [row.symbol for row in result.upcoming] == ["XEQT"]
-    assert result.upcoming[0].yield_pct == pytest.approx(1.8)
-    assert result.upcoming[0].frequency == "QUARTERLY"
-    assert result.upcoming[0].ex_date == "2026-09-28"
-    assert result.upcoming[0].payable_date == "2026-10-07"
+    rows_by_symbol = {row.symbol: row for row in result.upcoming}
+    assert set(rows_by_symbol) == {"XEQT", "NONE"}
+    assert rows_by_symbol["XEQT"].yield_pct == pytest.approx(1.8)
+    assert rows_by_symbol["XEQT"].frequency == "QUARTERLY"
+    assert rows_by_symbol["XEQT"].ex_date == "2026-09-28"
+    assert rows_by_symbol["XEQT"].payable_date == "2026-10-07"
+    assert rows_by_symbol["NONE"].yield_pct == pytest.approx(1.0)
+    assert rows_by_symbol["NONE"].ex_date is None
+    assert rows_by_symbol["NONE"].payable_date is None
     looked_up = [
         call.args[0]
         for call in mock_ws_client.get_security_dividend_details.call_args_list
     ]
-    assert looked_up == ["sec-s-xeqt", "sec-s-past", "sec-s-empty"]
+    assert looked_up == [
+        "sec-s-xeqt",
+        "sec-s-past",
+        "sec-s-empty",
+        "sec-s-zero",
+    ]
 
 
 def test_upcoming_skips_lookup_errors(mock_ws_client):
@@ -211,6 +226,41 @@ def test_upcoming_skips_lookup_errors(mock_ws_client):
 
     assert [row.symbol for row in result.upcoming] == ["GOOD"]
     assert result.upcoming[0].yield_pct == pytest.approx(3.2)
+
+
+def test_upcoming_uses_market_data_when_dividend_details_omit_security_labels(
+    mock_ws_client,
+):
+    mock_ws_client.get_dividends.return_value = _income_payload([], 0)
+    mock_ws_client.get_identity_positions.return_value = [
+        {"security": {"id": "sec-s-xeqt"}},
+    ]
+    mock_ws_client.get_security_dividend_details.return_value = {
+        "stock": {"dividendFrequency": "QUARTERLY"},
+        "fundamentals": {"yield": 0.018},
+        "events": [
+            {
+                "exDividendDate": "2026-09-28",
+                "recordDate": "2026-09-29",
+                "payableDate": "2026-10-07",
+            }
+        ],
+    }
+    mock_ws_client.get_security_market_data.return_value = {
+        "stock": {"symbol": "XEQT", "name": "iShares Core Equity ETF"},
+    }
+
+    result = get_dividends_data(
+        mock_ws_client, since="2026-01-01", as_of=AS_OF
+    )
+
+    assert len(result.upcoming) == 1
+    assert result.upcoming[0].symbol == "XEQT"
+    assert result.upcoming[0].name == "iShares Core Equity ETF"
+    assert result.upcoming[0].frequency == "QUARTERLY"
+    mock_ws_client.get_security_market_data.assert_called_once_with(
+        "sec-s-xeqt", use_cache=False
+    )
 
 
 def test_upcoming_filters_positions_by_account(mock_ws_client):
